@@ -1,0 +1,97 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const command = 'pyls';
+const cp = spawn('pyls', []);
+
+const startTime = Date.now();
+const virtualEnvName = process.env.VIRTUAL_ENV.split('/').pop();
+const logsPath = path.join(__dirname, `/logs-${command}-${virtualEnvName}-${startTime}`);
+
+const outQueue = [];
+let isSending = false;
+
+const inQueue = [];
+let isReceiving = false;
+
+function processOut() {
+  if (isSending) {
+    return;
+  }
+
+  const data = outQueue.shift();
+
+  if (typeof data === 'undefined') {
+    return;
+  }
+
+  isSending = true;
+
+  const latency = getLatencyForData(data);
+
+  setTimeout(() => {
+    process.stdout.write(data);
+    fs.appendFileSync(
+      logsPath,
+      Date.now() -
+        startTime +
+        '\nserver: ' +
+        data.toString('utf8') +
+        '\n===========\n'
+    );
+
+    isSending = false;
+    processOut();
+  }, latency);
+}
+
+function processIn() {
+  if (isReceiving) {
+    return;
+  }
+
+  const data = inQueue.shift();
+
+  if (typeof data === 'undefined') {
+    return;
+  }
+
+  isReceiving = true;
+
+  const latency = getLatencyForData(data);
+
+  setTimeout(() => {
+    cp.stdin.write(data);
+    fs.appendFileSync(
+      logsPath,
+      Date.now() -
+        startTime +
+        '\nclient: ' +
+        data.toString('utf8') +
+        '\n===========\n'
+    );
+
+    isReceiving = false;
+    processIn();
+  }, latency);
+}
+
+const baseLatency = 100;
+function getLatencyForData(data) {
+  const d = Buffer.from(data);
+
+  return d.byteLength / 100 + baseLatency;
+}
+
+cp.stdout.on('data', function (data) {
+  outQueue.push(data);
+  processOut();
+});
+
+process.stdin.on('data', (data) => {
+  inQueue.push(data);
+  processIn();
+});
